@@ -1,0 +1,354 @@
+jpsVersion: 1.3
+jpsType: install
+application:
+  id: chassotrezor-ci
+  name: Chassotrezor Continuous Integration
+  version: 0.0
+  baseUrl: https://raw.githubusercontent.com/chassotrezor/ci/master
+
+  settings:
+    fields:
+      - type: spacer
+        caption: softozor.ch credentials
+      - name: softozorUsername
+        caption: Username
+        type: string
+        required: true
+      - name: softozorPassword
+        caption: Password
+        type: string
+        inputType: password
+        required: true
+      - type: spacer
+        caption: Github credentials
+      - name: githubUsername
+        caption: Full permissions user
+        type: string
+        required: true
+      - name: githubPassword
+        caption: Password
+        type: string
+        inputType: password
+        required: true
+      - name: ghprbSecret
+        caption: GHPRB Secret 
+        type: string
+        required: true
+      - type: spacer 
+        caption: Docker credentials
+      - name: dockerUsername
+        caption: User
+        type: string
+        required: true
+      - name: dockerPassword
+        caption: Password
+        type: string
+        inputType: password
+        required: true
+      - type: spacer
+        caption: Jelastic credentials
+      - name: jelasticUrl
+        caption: Hoster URL
+        type: string
+        required: true
+      - name: jelasticAppId
+        caption: AppId
+        type: string
+        required: true
+      - name: jelasticUsername
+        caption: User
+        type: string
+        required: true
+      - name: jelasticPassword
+        caption: Password
+        type: string
+        inputType: password
+        required: true
+      - type: spacer
+        caption: E2e Backend JPS
+      - name: backendJpsBaseUrl
+        caption: Base Url
+        type: string
+        required: true
+        default: https://raw.githubusercontent.com/chassotrezor/backend/dev/e2e/
+      - type: spacer
+        caption: User accounts
+      - name: username1
+        caption: Username 1
+        type: string
+        required: true
+        default: zadigus 
+
+  globals:
+    JENKINS_PLUGINS_FILENAME: listOfJenkinsPlugins.txt
+    CREDENTIAL_FILENAME: credential.xml
+    SECRET_CREDENTIAL_FILENAME: secret.xml
+    GITHUB_CREDENTIAL_FILENAME: github-credentials.xml
+    SOFTOZOR_CREDENTIAL_FILENAME: softozor-credentials.xml
+    DOCKER_CREDENTIAL_FILENAME: docker-credentials.xml
+    JELASTIC_USER_CREDENTIAL_FILENAME: jelastic-credentials.xml
+    JELASTIC_APP_CREDENTIAL_FILENAME: jelastic-app-credentials.xml
+    BACKEND_CREDENTIAL_FILENAME: backend-name-credentials.xml
+    FRONTEND_CREDENTIAL_FILENAME: frontend-name-credentials.xml
+    CREDENTIAL_SCRIPT: CreateCredential.sh
+    USER_ACCOUNT_CREATION_SCRIPT: CreateUserAccount.sh
+    GITHUB_CREDENTIALS_ID: github-credentials
+    SOFTOZOR_CREDENTIALS_ID: softozor-credentials
+    DOCKER_CREDENTIALS_ID: docker-credentials
+    JELASTIC_USER_CREDENTIALS_ID: jelastic-credentials
+    JELASTIC_APP_CREDENTIALS_ID: jelastic-app-credentials
+    BACKEND_CREDENTIALS_ID: backend-name-credentials
+    FRONTEND_CREDENTIALS_ID: frontend-name-credentials
+    GHPRBTRIGGER_PLUGIN_CONFIG: org.jenkinsci.plugins.ghprb.GhprbTrigger.xml
+    GLOBAL_LIBRARIES_PLUGIN_CONFIG: org.jenkinsci.plugins.workflow.libs.GlobalLibraries.xml
+    USER_PASSWORD1: ${fn.password(10)}
+    backendEnvName: chassotrezor-backend-e2e
+    frontendEnvName: chassotrezor-frontend-e2e
+
+  env:
+    topology:
+        nodes:
+          - image: jenkins/jenkins:lts
+            count: 1
+            cloudlets: 32
+            nodeGroup: cp
+
+  onInstall:
+    - installDocker
+    - installPlugins
+    - installAptPackages
+    - createUserAccounts
+    - setupCredentials
+    - setupJobs
+    - setupJobViews
+    - sendEmailWithPasswords
+
+  actions:
+    installDocker:
+      - cmd [cp]:
+        - curl -fsSL ${baseUrl}/scripts/InstallDocker.sh | /bin/bash
+    installPlugins:
+      - cmd [cp]:
+          - cd /tmp
+          - wget --quiet ${baseUrl}/config/plugins/${globals.JENKINS_PLUGINS_FILENAME}
+          - curl -fsSL ${baseUrl}/scripts/InstallPlugins.sh | /bin/bash -s ${globals.JENKINS_PLUGINS_FILENAME}
+      - upload:
+          - nodeGroup: cp
+            sourcePath: ${baseUrl}/config/plugins/${globals.GHPRBTRIGGER_PLUGIN_CONFIG}
+            destPath: /var/jenkins_home/${globals.GHPRBTRIGGER_PLUGIN_CONFIG}
+          - nodeGroup: cp
+            sourcePath: ${baseUrl}/config/plugins/${globals.GLOBAL_LIBRARIES_PLUGIN_CONFIG}
+            destPath: /var/jenkins_home/${globals.GLOBAL_LIBRARIES_PLUGIN_CONFIG}
+      - api:
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: /var/jenkins_home/${globals.GHPRBTRIGGER_PLUGIN_CONFIG}
+              pattern: GITHUB_CREDENTIAL_ID
+              replacement: ${globals.GITHUB_CREDENTIALS_ID}
+              nodeGroup: cp
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: /var/jenkins_home/${globals.GHPRBTRIGGER_PLUGIN_CONFIG}
+              pattern: GHPRB_SHARED_SECRET
+              replacement: ${settings.ghprbSecret}
+              nodeGroup: cp
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: /var/jenkins_home/${globals.GLOBAL_LIBRARIES_PLUGIN_CONFIG}
+              pattern: GITHUB_CREDENTIAL_ID
+              replacement: ${globals.GITHUB_CREDENTIALS_ID}
+              nodeGroup: cp
+      - restart
+    installAptPackages:
+      - installTools
+    installTools:
+      - cmd [cp]:
+        - apt install -y jq dos2unix sshpass
+      - installYarn
+      - installPickles
+    installYarn:
+      cmd [cp]:
+        - curl -sL https://deb.nodesource.com/setup_10.x | bash -
+        - curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
+        - echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
+        - apt update 
+        - apt install -y yarn nodejs
+    installPickles:
+      - cmd [cp]:
+        - apt install -y mono-runtime mono-complete
+        - wget https://github.com/picklesdoc/pickles/releases/download/v2.20.1/Pickles-exe-2.20.1.zip
+        - unzip Pickles-exe-2.20.1.zip -d /opt/pickles
+    fillPasswordCredentials:
+      - api:
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: GLOBAL_OR_SYSTEM
+              replacement: ${this.globalOrSystem}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: CREDENTIAL_ID
+              replacement: ${this.credentialID}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: USERNAME
+              replacement: ${this.username}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: PASSWORD
+              replacement: ${this.password}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: DESCRIPTION
+              replacement: ${this.description}
+              nodeGroup: ${this.nodeGroup}
+    fillSecretCredentials:
+      - api:
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: GLOBAL_OR_SYSTEM
+              replacement: ${this.globalOrSystem}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: CREDENTIAL_ID
+              replacement: ${this.credentialID}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: SECRET
+              replacement: ${this.secret}
+              nodeGroup: ${this.nodeGroup}
+          - method: environment.file.ReplaceInBody
+            params: 
+              path: ${this.filename}
+              pattern: DESCRIPTION
+              replacement: ${this.description}
+              nodeGroup: ${this.nodeGroup}
+    setupCredentials:
+      - cmd [cp]:
+          - cd /tmp
+          - wget --quiet ${baseUrl}/config/${globals.CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.GITHUB_CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.SOFTOZOR_CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.DOCKER_CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.JELASTIC_USER_CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.JELASTIC_APP_CREDENTIAL_FILENAME}
+          - cp ${globals.CREDENTIAL_FILENAME} ${globals.BACKEND_CREDENTIAL_FILENAME}
+          - wget --quiet ${baseUrl}/config/${globals.SECRET_CREDENTIAL_FILENAME}
+          - cp ${globals.SECRET_CREDENTIAL_FILENAME} ${globals.FRONTEND_CREDENTIAL_FILENAME}
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.GITHUB_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.GITHUB_CREDENTIALS_ID}
+          username: ${settings.githubUsername}
+          password: ${settings.githubPassword}
+          description: Github credentials
+          nodeGroup: cp
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.SOFTOZOR_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.SOFTOZOR_CREDENTIALS_ID}
+          username: ${settings.softozorUsername}
+          password: ${settings.softozorPassword}
+          description: Softozor.ch credentials
+          nodeGroup: cp
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.DOCKER_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.DOCKER_CREDENTIALS_ID}
+          username: ${settings.dockerUsername}
+          password: ${settings.dockerPassword}
+          description: Docker hub credentials
+          nodeGroup: cp
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.JELASTIC_USER_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.JELASTIC_USER_CREDENTIALS_ID}
+          username: ${settings.jelasticUsername}
+          password: ${settings.jelasticPassword}
+          description: Jelastic user credentials
+          nodeGroup: cp
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.JELASTIC_APP_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.JELASTIC_APP_CREDENTIALS_ID}
+          username: ${settings.jelasticUrl}
+          password: ${settings.jelasticAppId}
+          description: Jelastic app credentials (hoster url and app id)
+          nodeGroup: cp
+      - fillPasswordCredentials:
+          filename: /tmp/${globals.BACKEND_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.BACKEND_CREDENTIALS_ID}
+          username: ${globals.backendEnvName}
+          password: ${settings.backendJpsBaseUrl}
+          description: Name and base raw jps url of the backend environment (it is intended to be completed with /manifest.jps)
+          nodeGroup: cp
+      - fillSecretCredentials:
+          filename: /tmp/${globals.FRONTEND_CREDENTIAL_FILENAME}
+          globalOrSystem: GLOBAL
+          credentialID: ${globals.FRONTEND_CREDENTIALS_ID}
+          secret: ${globals.frontendEnvName}
+          description: Name of the frontend environment
+          nodeGroup: cp
+      - cmd [cp]:
+          - wget --quiet ${baseUrl}/scripts/${globals.CREDENTIAL_SCRIPT} -O /tmp/${globals.CREDENTIAL_SCRIPT}
+          - chmod u+x /tmp/${globals.CREDENTIAL_SCRIPT}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.GITHUB_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.SOFTOZOR_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.DOCKER_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.JELASTIC_USER_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.JELASTIC_APP_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.BACKEND_CREDENTIAL_FILENAME}
+          - /tmp/${globals.CREDENTIAL_SCRIPT} /tmp/${globals.FRONTEND_CREDENTIAL_FILENAME}
+      - restart
+    createUserAccounts:
+      - createUserAccount:
+          username: ${settings.username1}
+          password: ${globals.USER_PASSWORD1}
+    createUserAccount:
+      - cmd [cp]:
+        - cd /tmp
+        - wget --quiet ${baseUrl}/scripts/${globals.USER_ACCOUNT_CREATION_SCRIPT} -O /tmp/${globals.USER_ACCOUNT_CREATION_SCRIPT}
+        - chmod u+x /tmp/${globals.USER_ACCOUNT_CREATION_SCRIPT}
+        - /tmp/${globals.USER_ACCOUNT_CREATION_SCRIPT} "${this.username}" "${this.password}" "admin" "$(cat /var/jenkins_home/secrets/initialAdminPassword)"
+    setupJobs:
+      # It was necessary to put the job setup in a separate jps.
+      # Putting the code written in the job-setup.jps here directly 
+      # always fails for an unknown reason.
+      - install:
+          jps: ${baseUrl}/config/job-setup.jps
+          envName: ${env.envName}
+          settings:
+            username: admin 
+            password: doYouReallyBelieveThisIsTheAdminPassword?
+    setupJobViews:
+      - cmd [cp]:
+        - mv /var/jenkins_home/config.xml /var/jenkins_home/config.xml.bak
+      - upload:
+        - nodeGroup: cp
+          sourcePath: ${baseUrl}/config/main-config.xml
+          destPath: /var/jenkins_home/config.xml
+    sendEmailWithPasswords:
+      return:
+        result: success
+        email: |
+          # User accounts
+          * **${settings.username1}**: ${globals.USER_PASSWORD1}
+    restart:  
+      - restartContainers:
+        - nodeGroup: cp
+success: |
+  **Your environment Jenkins has been installed successfully.**

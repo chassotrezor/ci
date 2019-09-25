@@ -1,0 +1,87 @@
+jpsVersion: 1.3
+jpsType: update
+application:
+  id: chassotrezor-ci
+  name: Chassotrezor Continuous Integration
+  version: 0.0
+  baseUrl: https://raw.githubusercontent.com/chassotrezor/ci/master
+
+  globals:
+    JOB_CREATION_SCRIPT: CreateJob.sh
+    GITHUB_CREDENTIALS_ID: github-credentials
+    HIDORA_CREDENTIALS_ID: hidora-credentials
+
+  settings:
+    fields:
+      - type: spacer
+        caption: Jenkins credentials
+      - name: username
+        caption: Username
+        type: string
+        required: true
+        default: admin
+      - name: password
+        caption: Password
+        type: string
+        inputType: password
+        required: true
+
+  onInstall:
+    - setupJobs
+
+  actions:
+    setupJobs:
+      - setupJob:
+          jobName: backend-acceptance
+      - setupJob:
+          jobName: backend-acceptance-pr
+      - setupJob:
+          jobName: backend-deploy
+      - setupJob:
+          jobName: backend-spec
+      - setupJob:
+          jobName: backend-unit
+      - setupJob:
+          jobName: backend-unit-pr
+      - setupJob:
+          jobName: e2e
+      - setupJob:
+          jobName: frontend-integration
+      - setupJob:
+          jobName: frontend-integration-pr
+      - setupJob:
+          jobName: frontend-spec
+      - setupJob:
+          jobName: frontend-unit
+      - setupJob:
+          jobName: frontend-unit-pr
+      - setupJob:
+          jobName: security
+      - restart
+    setupJob:
+      - upload:
+        - nodeGroup: cp
+          sourcePath: ${baseUrl}/config/${this.jobName}.xml
+          destPath: /tmp/${this.jobName}.xml
+      - replaceInFile:
+          nodeType: docker
+          path: /tmp/${this.jobName}.xml
+          replacements:
+            - pattern: GITHUB_CREDENTIAL_ID
+              replacement: ${globals.GITHUB_CREDENTIALS_ID}
+      - cmd [cp]:
+        - cd /tmp
+        - wget ${baseUrl}/scripts/${globals.JOB_CREATION_SCRIPT} -O /tmp/${globals.JOB_CREATION_SCRIPT}
+        - chmod u+x /tmp/${globals.JOB_CREATION_SCRIPT}
+      - if (settings.username == "admin"):
+          - cmd [cp]:
+              - cd /tmp && /tmp/${globals.JOB_CREATION_SCRIPT} "${this.jobName}" "${settings.username}" "$(cat /var/jenkins_home/secrets/initialAdminPassword)"
+      - if (settings.username != "admin"):
+          - cmd [cp]:
+              - cd /tmp && /tmp/${globals.JOB_CREATION_SCRIPT} "${this.jobName}" "${settings.username}" "${settings.password}"
+    restart:  
+      - restartContainers:
+        - nodeGroup: cp
+
+success: |
+  **Your environment Jenkins has been installed successfully.**
